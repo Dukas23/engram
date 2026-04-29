@@ -1430,6 +1430,12 @@ func handleSessionStart(s *store.Store, cfg MCPConfig, activity *SessionActivity
 		project, _ := store.NormalizeProject(detRes.Project)
 
 		activity.RecordToolCall(defaultSessionID(project))
+		if strings.TrimSpace(directory) == "" {
+			directory = strings.TrimSpace(detRes.Path)
+			if directory == "" {
+				directory = currentWorkingDirectory()
+			}
+		}
 
 		if err := s.CreateSession(id, project, directory); err != nil {
 			return mcp.NewToolResultError("Failed to start session: " + err.Error()), nil
