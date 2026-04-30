@@ -47,7 +47,7 @@ engram setup opencode
 
 This does three things:
 1. Copies the plugin to `~/.config/opencode/plugins/engram.ts` (session tracking, Memory Protocol, compaction recovery)
-2. Adds the `engram` MCP server entry to your `opencode.json` with `--tools=agent` (12 agent-facing tools)
+2. Adds the `engram` MCP server entry to your `opencode.json` with `--tools=agent` (14 agent-facing tools)
 3. Adds `opencode-subagent-statusline` to your `tui.json` or `tui.jsonc` so OpenCode shows sub-agent activity in the sidebar/home footer
 
 The plugin auto-starts the HTTP server if needed for session tracking. If your environment blocks background processes, run it manually:
@@ -58,7 +58,7 @@ engram serve &
 
 > **Windows**: OpenCode uses `~/.config/opencode/` on Windows too (it does not read `%APPDATA%\opencode\`). `engram setup opencode` writes to `~/.config/opencode/plugins/` and `~/.config/opencode/opencode.json`. To run the server in the background: `Start-Process engram -ArgumentList "serve" -WindowStyle Hidden` (PowerShell) or just run `engram serve` in a separate terminal.
 
-**Alternative: Manual MCP-only setup** (no plugin, all 17 tools by default):
+**Alternative: Manual MCP-only setup** (no plugin, all 18 tools by default):
 
 Add to your `opencode.json` (global: `~/.config/opencode/opencode.json` on all platforms, or project-level):
 
@@ -99,7 +99,7 @@ engram setup claude-code
 
 During setup, you'll be asked whether to add engram's agent-profile MCP tools to `~/.claude/settings.json` `permissions.allow`. The setup writes entries for both the durable user-level MCP server id (`mcp__engram__...`) and the plugin-scoped server id used by older Claude Code plugin installs, so re-running setup repairs stale or incomplete allowlists without adding startup delay.
 
-**Option C: Bare MCP** — all 17 tools by default, no session management:
+**Option C: Bare MCP** — all 18 tools by default, no session management:
 
 Add to your `.claude/settings.json` (project) or `~/.claude/settings.json` (global):
 
@@ -443,10 +443,19 @@ There is no separate dashboard or conflict list in Phase 1.
 
 Once the agent calls `mem_judge` with a verdict:
 - The relation row is persisted with `judgment_status: "judged"` and the chosen `relation`.
-- If the relation is `supersedes`, future `mem_search` results will show `supersedes:` / `superseded_by:` annotations for the affected observations.
-- If the relation is `conflicts_with`, `compatible`, `related`, `scoped`, or `not_conflict`, the judgment is stored in `memory_relations` but no annotation appears in search results (Phase 1 scope).
+- If the relation is `supersedes`, future `mem_search` results show `supersedes: #<id> (<title>)` and `superseded_by: #<id> (<title>)` annotations on the affected observations, including the related memory's title.
+- If the relation is `conflicts_with`, future `mem_search` results show `conflicts: #<id> (<title>)` on both observations.
+- If the relation is `compatible`, `related`, `scoped`, or `not_conflict`, the judgment is stored in `memory_relations` but no annotation appears in search results.
+
+**Cloud sync**: when the project is enrolled in Engram Cloud and autosync is enabled, `mem_judge` verdicts propagate to other machines via the standard mutation push/pull cycle. The annotation appears in `mem_search` results on any machine that has pulled the relevant mutations. Relations that reference an observation not yet present locally are deferred and retried automatically on subsequent pull cycles — the verdict is never lost.
 
 Nothing breaks if `mem_judge` is never called — pending relations accumulate unjudged but do not affect other operations.
+
+### Proactive semantic comparison (mem_compare)
+
+Agents can also proactively judge the relationship between any two memories using `mem_compare` (also available in the agent profile). Unlike `mem_judge`, which resolves a candidate surfaced by `mem_save`, `mem_compare` lets the agent compare any two observation IDs it has already read, and persist a verdict directly. This is useful for agent-initiated semantic audit workflows.
+
+See [Plugins → mem_compare reference](PLUGINS.md#mcp-tool-reference--mem_compare) for parameters and behavior.
 
 ---
 
