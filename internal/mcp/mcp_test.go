@@ -2791,7 +2791,7 @@ func TestSessionStartWithExplicitDirectoryResolvesProjectFromDirectory(t *testin
 
 // TestWriteSchema_ProjectFieldOnlyForAmbiguousRecovery asserts that only the
 // write tools with explicit ambiguous-project recovery expose project fields.
-func TestWriteSchema_NoProjectField(t *testing.T) {
+func TestWriteSchema_ProjectFieldOnlyForAmbiguousRecovery(t *testing.T) {
 	s := newMCPTestStore(t)
 	srv := NewServer(s)
 
@@ -2976,9 +2976,107 @@ func TestMemSave_AmbiguousWithValidUserChoiceSucceeds(t *testing.T) {
 	if body["project"] != "repo-choice-b" || body["project_source"] != project.SourceUserSelectedAfterAmbiguousProject {
 		t.Fatalf("expected explicit user choice envelope, got %v", body)
 	}
+	if body["project_path"] != filepath.Join(parent, "repo-choice-b") {
+		t.Fatalf("expected project_path to point at selected repo root, got %v", body)
+	}
 	obs, err := s.Search("chosen project memory", store.SearchOptions{Project: "repo-choice-b", Limit: 5})
 	if err != nil || len(obs) != 1 {
 		t.Fatalf("expected observation in selected project, obs=%d err=%v", len(obs), err)
+	}
+}
+
+func TestMemSave_AmbiguousChoiceRequiresExactAvailableProject(t *testing.T) {
+	parent := t.TempDir()
+	for _, name := range []string{"foo--bar", "baz__qux"} {
+		child := filepath.Join(parent, name)
+		if err := os.MkdirAll(child, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		initTestGitRepo(t, child)
+	}
+	t.Chdir(parent)
+
+	s := newMCPTestStore(t)
+	h := handleSave(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
+	res, err := h(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"title":                 "normalized choice must fail",
+		"content":               "must not save under normalized collision",
+		"project":               "foo-bar",
+		"project_choice_reason": project.SourceUserSelectedAfterAmbiguousProject,
+	}}})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected invalid project choice for normalized-but-not-exact value")
+	}
+	body := callResultJSON(t, res)
+	if body["error_code"] != "invalid_project_choice" {
+		t.Fatalf("expected invalid_project_choice, got %v", body)
+	}
+	available, ok := body["available_projects"].([]any)
+	foundFooBar := false
+	for _, candidate := range available {
+		if candidate == "foo--bar" {
+			foundFooBar = true
+			break
+		}
+	}
+	if !ok || !foundFooBar {
+		t.Fatalf("expected exact available project names, got %v", body["available_projects"])
+	}
+	if strings.Contains(body["message"].(string), "foo--bar") {
+		t.Fatalf("message should report the rejected trimmed choice, not a normalized available value: %v", body)
+	}
+	obs, searchErr := s.Search("normalized choice must fail", store.SearchOptions{Project: "foo-bar", Limit: 5})
+	if searchErr != nil || len(obs) != 0 {
+		t.Fatalf("normalized collision must not receive writes, obs=%d err=%v", len(obs), searchErr)
+	}
+
+	res, err = h(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"title":                 "exact choice succeeds",
+		"content":               "saved after exact available project choice",
+		"project":               "  baz__qux  ",
+		"project_choice_reason": project.SourceUserSelectedAfterAmbiguousProject,
+	}}})
+	if err != nil || res.IsError {
+		t.Fatalf("exact trimmed choice should succeed: err=%v isError=%v text=%q", err, res.IsError, callResultText(t, res))
+	}
+	body = callResultJSON(t, res)
+	if body["project_path"] != filepath.Join(parent, "baz__qux") {
+		t.Fatalf("expected project_path to selected exact repo root, got %v", body)
+	}
+}
+
+func TestMemSave_AmbiguousEmptyProjectChoiceIsActionable(t *testing.T) {
+	parent := t.TempDir()
+	for _, name := range []string{"repo-empty-a", "repo-empty-b"} {
+		child := filepath.Join(parent, name)
+		if err := os.MkdirAll(child, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		initTestGitRepo(t, child)
+	}
+	t.Chdir(parent)
+
+	s := newMCPTestStore(t)
+	h := handleSave(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
+	res, err := h(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"title":                 "empty choice must fail",
+		"content":               "must not save",
+		"project":               " \t\n ",
+		"project_choice_reason": project.SourceUserSelectedAfterAmbiguousProject,
+	}}})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected invalid project choice for whitespace project")
+	}
+	body := callResultJSON(t, res)
+	message, _ := body["message"].(string)
+	if body["error_code"] != "invalid_project_choice" || !strings.Contains(message, "Project choice is empty") || !strings.Contains(message, "available_projects") {
+		t.Fatalf("expected actionable empty choice error, got %v", body)
 	}
 }
 
@@ -3044,6 +3142,9 @@ func TestMemSavePrompt_AmbiguousWithValidUserChoiceSucceeds(t *testing.T) {
 	body := callResultJSON(t, res)
 	if body["project"] != "repo-prompt-a" || body["project_source"] != project.SourceUserSelectedAfterAmbiguousProject {
 		t.Fatalf("expected explicit user choice envelope, got %v", body)
+	}
+	if body["project_path"] != filepath.Join(parent, "repo-prompt-a") {
+		t.Fatalf("expected project_path to point at selected prompt repo root, got %v", body)
 	}
 	prompts, err := s.RecentPrompts("repo-prompt-a", 5)
 	if err != nil || len(prompts) != 1 {

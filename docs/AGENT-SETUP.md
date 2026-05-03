@@ -50,7 +50,7 @@ If a write tool returns `ambiguous_project`, the agent must not guess. Ask the u
 }
 ```
 
-This recovery path is accepted only after cwd detection is ambiguous and only when `project` exactly matches one of the reported `available_projects`. In all non-ambiguous cases, `.engram/config.json`/git/cwd detection remains authoritative and the explicit `project` is ignored. Alternatives: `cd` into the target repo before starting the MCP server, or add repo `.engram/config.json`.
+This recovery path is accepted only after cwd detection is ambiguous and only when `project`, after trimming surrounding whitespace, exactly matches one of the reported `available_projects`. Do not send normalized variants or guesses: if `available_projects` contains `foo--bar`, the retry must use `foo--bar`, not `foo-bar`; empty/whitespace choices are rejected. In all non-ambiguous cases, `.engram/config.json`/git/cwd detection remains authoritative and the explicit `project` is ignored. Alternatives: `cd` into the target repo before starting the MCP server, or add repo `.engram/config.json`.
 
 **Read tools** (`mem_search`, `mem_context`, `mem_get_observation`, `mem_stats`, `mem_timeline`) accept an optional `project` override validated against the store. Omit it to auto-detect.
 

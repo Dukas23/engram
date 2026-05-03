@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -1921,7 +1922,7 @@ func resolveWriteProjectWithChoice(projectChoice, reason string) (projectpkg.Det
 		return res, err
 	}
 
-	choice, _ := store.NormalizeProject(projectChoice)
+	choice := strings.TrimSpace(projectChoice)
 	if choice == "" || !containsProjectChoice(res.AvailableProjects, choice) {
 		return res, &invalidProjectChoiceError{
 			Name:              choice,
@@ -1931,18 +1932,52 @@ func resolveWriteProjectWithChoice(projectChoice, reason string) (projectpkg.Det
 
 	res.Project = choice
 	res.Source = projectpkg.SourceUserSelectedAfterAmbiguousProject
+	res.Path = resolveAmbiguousChoicePath(res.Path, choice)
 	res.Warning = "project selected by user after ambiguous_project recovery"
 	return res, nil
 }
 
 func containsProjectChoice(available []string, choice string) bool {
+	choice = strings.TrimSpace(choice)
 	for _, candidate := range available {
-		normalized, _ := store.NormalizeProject(candidate)
-		if normalized == choice {
+		if strings.TrimSpace(candidate) == choice {
 			return true
 		}
 	}
 	return false
+}
+
+func resolveAmbiguousChoicePath(ambiguousParent, choice string) string {
+	parent := strings.TrimSpace(ambiguousParent)
+	if parent == "" || strings.TrimSpace(choice) == "" {
+		return ""
+	}
+
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Match the same name shape used by project.DetectProjectFull for
+		// available_projects: trim + lowercase only. Do not use store.NormalizeProject
+		// here because it collapses repeated '-'/'_' and can create collisions.
+		if strings.TrimSpace(strings.ToLower(entry.Name())) != choice {
+			continue
+		}
+		childPath := filepath.Join(parent, entry.Name())
+		if _, err := os.Stat(filepath.Join(childPath, ".git")); err != nil {
+			continue
+		}
+		absChild, err := filepath.Abs(childPath)
+		if err != nil {
+			return childPath
+		}
+		return absChild
+	}
+	return ""
 }
 
 // resolveReadProject validates an optional project override against the store.
@@ -2001,6 +2036,12 @@ func writeProjectErrorResult(res projectpkg.DetectionResult, err error) *mcp.Cal
 	}
 	var choiceErr *invalidProjectChoiceError
 	if errors.As(err, &choiceErr) {
+		if choiceErr.Name == "" {
+			return errorWithMeta("invalid_project_choice",
+				"Project choice is empty; choose exactly one value from available_projects and retry with project_choice_reason=user_selected_after_ambiguous_project",
+				choiceErr.AvailableProjects,
+			)
+		}
 		return errorWithMeta("invalid_project_choice",
 			fmt.Sprintf("Project choice %q is not one of available_projects", choiceErr.Name),
 			choiceErr.AvailableProjects,
